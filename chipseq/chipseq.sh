@@ -3,7 +3,8 @@
 function usage() {
     cat <<EOF
 SYNOPSIS
-  chipseq.sh - run chipseq pipeline
+  chipseq.sh      - run chipseq pipeline
+  chipseq.sh help - display this help message
 DESCRIPTION
   Look for fastq files in './fastq/'. Align them, call
   peaks, merge all peaks, and then count reads
@@ -21,13 +22,32 @@ AUTHOR
 EOF
 }
 
-# short id to make sure job names are unique for diffenrent pipeline runs
+function info() {
+    echo "INFO: $@" >&2
+}
+function error() {
+    echo "ERR:  $@" >&2
+}
+function fatal() {
+    echo "ERR:  $@" >&2
+    exit 1
+}
+
+
+
+# Create a (hopefully) unique prefix for the names of all jobs in this 
+# particular run of the pipeline. This makes sure that runs can be
+# identified unambiguously
 run=$(uuidgen | tr '-' ' ' | awk '{print $1}')
+
+# show help message if there were any arguments
+if [[ $# -ne 0 ]]; then usage; exit; fi
 
 ################################################################################
 #                          find samples and controls                           #
 ################################################################################
 
+# separate fastq files into samples and controls based on name
 fastq_files=( $(ls fastq/*.{fastq,fq}* 2>/dev/null) )
 declare -a samples controls
 for f in ${fastq_files[@]}; do
@@ -37,22 +57,25 @@ for f in ${fastq_files[@]}; do
         samples+=($f)
     fi
 done 
+
+# make sure there are samples
 if [[ ${#samples[@]} -eq 0 ]]; then
-    echo "no samples in fastq/"
-    exit 1
+    fatal "no samples found in fastq/"
 fi
-if [[ ${#controls[@]} -ne 1 ]]; then
-    echo "no control found in fastq/"
+
+# make sure there is at least one control
+if [[ ${#controls[@]} -eq 0 ]]; then
+    fatal "no control found in fastq/"
 fi
 control=${controls[0]}
 
-echo "samples:" 
+info "samples: n = ${#samples[@]}" 
 for sample in ${samples[@]}; do
-    echo "    $sample"
+    info "    $sample"
 done
-echo "control:"
-echo "    $control"
+info "control: $control"
 
+exit
 
 ################################################################################
 #                               run the pipeline                               #
