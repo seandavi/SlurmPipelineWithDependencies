@@ -48,6 +48,7 @@ if [[ $# -ne 0 ]]; then usage; exit; fi
 ################################################################################
 
 # separate fastq files into samples and controls based on name
+# Note: the syntax a+=(b) adds b to the array a
 fastq_files=( $(ls fastq/*.{fastq,fq}* 2>/dev/null) )
 declare -a samples controls
 for f in ${fastq_files[@]}; do
@@ -75,7 +76,6 @@ for sample in ${samples[@]}; do
 done
 info "control: $control"
 
-exit
 
 ################################################################################
 #                               run the pipeline                               #
@@ -89,22 +89,24 @@ bam_files=()
 for f in ${samples[@]}; do
     n=$(basename ${f%%.*})
     bam_files+=(bam/$n.bam)
-    aln_jobids+=($(sbatch --mem=1g --time=5 --job-name=$run.align --out=log/$run.align.$n \
-        bin/align.sh $f bam/$n.bam))
+    aln_jobids+=($(sbatch --mem=1g --time=5 --job-name=$run.align \
+        --output=log/$run.align.$n bin/align.sh $f bam/$n.bam))
 done
 
 # align the control separately and record jobid since all peak calls depend
 # on the sample alignment and the control alignment
 ctrln=$(basename ${control%%.*})
 bam_files+=(bam/$ctrln.bam)
-ctrlaln_jobid=$(sbatch --mem=1g --time=5 --job-name=$run.align --out=log/$run.align.$ctrln \
-    bin/align.sh $control bam/$ctrln.bam)
+ctrlaln_jobid=$(sbatch --mem=1g --time=5 --job-name=$run.align \
+    --output=log/$run.align.$ctrln bin/align.sh $control bam/$ctrln.bam)
 
-echo "Alignment jobids: ${aln_jobids[@]} ${ctrlaln_jobid}"
+info "Alignment jobids: ${aln_jobids[@]} ${ctrlaln_jobid}"
 
 # STEP2: PEAK CALLS. Each peak call will start when the corresponding alignments
 #        finish sucessfully. Note, if STEP1 fails, all jobs depending on
 #        it will remain in the queue and need to be canceled explicitly.
+#        An alternative would be to use 'afterany' and make each job check for
+#        the successful execution of the prerequisites.
 peak_jobids=()
 peak_files=()
 for i in $(seq 1 ${#samples[@]}); do
@@ -113,27 +115,31 @@ for i in $(seq 1 ${#samples[@]}); do
     sbam=bam/$n.bam
     cbam=bam/$ctrln.bam
     peak_files+=(peaks/$n.xls)
-    peak_jobids+=($(sbatch --mem=1g --time=5 --job-name=$run.peaks --out=log/$run.peaks.$n \
-        --dependency=afterok:$ctrlaln_jobid:${aln_jobids[$idx]} \
+    peak_jobids+=($(sbatch --mem=1g --time=5 --job-name=$run.peaks \
+        --output=log/$run.peaks.$n \
+        --dependency=afterok:$ctrlaln_jobid,${aln_jobids[$idx]} \
         bin/peaks.sh $sbam $cbam peaks/$n.xls))
 done
-echo "peak calling jobids: ${peak_jobids[@]}"
+info "peak calling jobids: ${peak_jobids[@]}"
 
 # STEP3: MERGING PEAKS. This step needs *ALL* peak calls to finish. To do this,
 #        use a singleton dependency and give the summary job the same name as the
-#        jobs that need to finish first
-merge_jobid=$(sbatch --mem=1g --time=5 --job-name=$run.peaks --out=log/$run.peaks_merge \
+#        jobs that need to finish first (i.e. the peak calling jobs)
+merge_jobid=$(sbatch --mem=1g --time=5 --job-name=$run.peaks \
+    --output=log/$run.peaks_merge \
     --dependency=singleton \
     bin/merge_peaks.sh peaks/merged ${peak_files[@]})
-echo "merge peaks jobid: $merge_jobid"
+info "merge peaks jobid: $merge_jobid"
 
 # STEP4: count reads of all bam files against the peaks after STEP3 finishes
 count_jobids=()
 for f in ${bam_files[@]}; do
     n=$(basename ${f%%.bam})
-    count_jobids+=($(sbatch --mem=1g --time=5 --job-name=$run.count --out=log/$run.count.$n \
+    count_jobids+=($(sbatch --mem=1g --time=5 --job-name=$run.count \
+        --output=log/$run.count.$n \
         --dependency=afterok:$merge_jobid \
         bin/count.sh $f peaks/merged counts/$n))
 done
-echo "count reads jobids: ${count_jobids[@]}"
-echo "DONE submitting"
+info "count reads jobids: ${count_jobids[@]}"
+info "DONE submitting"
+squeue -u $USER
