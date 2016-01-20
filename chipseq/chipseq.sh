@@ -117,7 +117,7 @@ for i in $(seq 1 ${#samples[@]}); do
     peak_files+=(peaks/$n.xls)
     peak_jobids+=($(sbatch --mem=1g --time=5 --job-name=$run.peaks \
         --output=log/$run.peaks.$n \
-        --dependency=afterok:$ctrlaln_jobid,${aln_jobids[$idx]} \
+        --dependency=afterok:$ctrlaln_jobid:${aln_jobids[$idx]} \
         bin/peaks.sh $sbam $cbam peaks/$n.xls))
 done
 info "peak calling jobids: ${peak_jobids[@]}"
